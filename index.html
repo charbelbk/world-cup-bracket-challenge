@@ -180,6 +180,16 @@
   </div>
 </div>
 
+<!-- My challenges & duels modal -->
+<div class="overlay" id="mineModal">
+  <div class="modal">
+    <button class="x" onclick="closeMine()">×</button>
+    <h2>My challenges &amp; duels</h2>
+    <p class="s">Every challenge you've sent and every duel you're in, saved on this device. A challenge shows as <b>🟢 Live</b> once the other person accepts and you open the duel link they send back — then tap <b>View duel</b> to see both brackets and the running score.</p>
+    <div class="inv-list" id="mineList"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -339,6 +349,8 @@ function loadDuelFromParams(p){
   const results = decodeResults(resStr);
   duel = { cid, a, b, results };
   saveLocal('wc_duel_'+cid, {cid,an:a.name,ac:a.color,ab:p.get('ab'),bn:b.name,bc:b.color,bb:p.get('bb')});
+  // record this duel so it can be reopened later from "My challenges"
+  upsertList('wc_duels', {cid, an:a.name, bn:b.name, link: baseURL()+'#'+p.toString(), ts:Date.now()});
 }
 
 /* ============================================================
@@ -569,11 +581,14 @@ function setView(v){ duelView=v; resultsEdit=false; render(); }
 
 function updateFooter(){
   const f=$('#footer');
+  const mineCount = new Set([...getList('wc_challenges'),...getList('wc_duels')].map(x=>x.cid)).size;
+  const mineBtn = mineCount ? `<button class="btn ghost sm" onclick="openMine()" style="margin-left:8px">📋 My challenges (${mineCount})</button>` : '';
   if(MODE==='build'){
     const done=complete(picks);
     f.innerHTML=`
       <button class="btn primary" id="challengeBtn" ${done?'':'disabled'} onclick="openSetup()">
         ${done?'🥊 Save & Challenge a friend':'Finish your bracket to challenge'}</button>
+      ${mineBtn}
       <button class="btn ghost sm" onclick="resetBracket()" style="margin-left:8px">Reset</button>
       <div class="hint">${done?'Your bracket is complete!':'Pick a winner in all '+TOTAL+' matchups.'}</div>`;
   } else if(MODE==='join'){
@@ -587,6 +602,7 @@ function updateFooter(){
       <button class="btn ${resultsEdit?'primary':'ghost'}" onclick="toggleResultsEdit()">
         ${resultsEdit?'✓ Done updating results':'⚙️ Update actual results'}</button>
       <button class="btn wa" onclick="shareDuel()" style="margin-left:8px">Share duel link</button>
+      ${mineBtn}
       <div class="hint">${resultsEdit
         ?'Tap the real winner of each completed matchup. Scores update live.'
         :'Bookmark this page to track the duel all tournament long.'}</div>`;
@@ -643,10 +659,12 @@ function challengeLink(inv){
 }
 function renderInvites(){
   me.name=$('#myName').value.trim()||me.name;
-  const list=$('#invList'); list.innerHTML='';
+  const list=$('#invList'); list.innerHTML=''; _acts=[];
   if(!invites.length){ list.innerHTML='<div class="hint" style="text-align:left">No one added yet. Add a name above — you can add several.</div>'; return; }
   invites.forEach(inv=>{
     const link=challengeLink(inv);
+    // remember this challenge so it can be found again later from "My challenges"
+    upsertList('wc_challenges',{cid:inv.cid,name:inv.name,link,ts:Date.now()});
     const oppColor=COLORS[nextColor(me.color)].v;
     const msg=`${me.name||'A friend'} challenged you to a World Cup bracket duel! 🏆⚽\nFill out your bracket here: ${link}`;
     const wa=`https://wa.me/?text=${encodeURIComponent(msg)}`;
@@ -659,12 +677,57 @@ function renderInvites(){
       <div class="ilink">${esc(link)}</div>
       <div class="acts">
         <a class="btn wa sm" href="${wa}" target="_blank" rel="noopener">Send on WhatsApp</a>
-        <button class="btn ghost sm" onclick="copyText(${JSON.stringify(link)})">Copy link</button>
-        <button class="btn ghost sm" onclick="shareNative(${JSON.stringify(msg)})">Share…</button>
+        ${actBtn('Copy link','ghost',()=>copyText(link))}
+        ${actBtn('Share…','ghost',()=>shareNative(msg))}
       </div>`;
     list.appendChild(row);
   });
 }
+
+/* ============================================================
+   MY CHALLENGES & DUELS  (persistent tracker)
+   ============================================================ */
+function openMine(){ renderMine(); $('#mineModal').classList.add('on'); }
+function closeMine(){ $('#mineModal').classList.remove('on'); }
+function waLink(msg){ return `https://wa.me/?text=${encodeURIComponent(msg)}`; }
+function renderMine(){
+  const ch=getList('wc_challenges'), du=getList('wc_duels');
+  const duByCid={}; du.forEach(d=>duByCid[d.cid]=d);
+  const list=$('#mineList'); list.innerHTML=''; _acts=[];
+  const rows=[]; const seen={};
+  ch.forEach(c=>{ seen[c.cid]=1; rows.push(mineRow(c, duByCid[c.cid])); });
+  du.forEach(d=>{ if(!seen[d.cid]) rows.push(mineRow(null,d)); });
+  if(!rows.length){
+    list.innerHTML='<div class="hint" style="text-align:left">No challenges yet. Finish your bracket, tap “Save &amp; Challenge a friend”, and add some people.</div>';
+    return;
+  }
+  list.innerHTML=rows.join('');
+}
+function mineRow(ch, du){
+  const live = !!du;
+  const opp = COLORS[nextColor(me.color)].v;
+  let name, status, acts;
+  if(live){
+    name = du.an && du.bn ? `${esc(du.an)} vs ${esc(du.bn)}` : esc((ch&&ch.name)||'Duel');
+    status = '<span style="color:#16a34a;font-weight:700">🟢 Live</span>';
+    acts = actBtn('View duel','primary',()=>goLink(du.link)) +
+           actBtn('Copy duel link','ghost',()=>copyText(du.link));
+  } else {
+    name = `<span class="badge-dot" style="background:${opp}"></span>${esc(ch.name)}`;
+    status = '<span style="color:#b45309;font-weight:700">⏳ Waiting to accept</span>';
+    const msg=`${me.name||'A friend'} challenged you to a World Cup bracket duel! 🏆⚽\nFill out your bracket here: ${ch.link}`;
+    acts = `<a class="btn wa sm" href="${waLink(msg)}" target="_blank" rel="noopener">Resend on WhatsApp</a>` +
+           actBtn('Copy link','ghost',()=>copyText(ch.link));
+  }
+  return `<div class="inv-card">
+      <div class="top">
+        <div class="iname">${name}</div>
+        <div class="hint" style="margin:0">${status}</div>
+      </div>
+      <div class="acts">${acts}</div>
+    </div>`;
+}
+function goLink(url){ if(url) location.href=url; }
 
 /* ============================================================
    JOIN -> create duel
@@ -724,6 +787,14 @@ function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('on'
   clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),1800); }
 function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
 function loadLocal(k){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch(e){return null;} }
+// persistent lists of challenges sent / duels joined, keyed by challenge id (cid)
+function getList(k){ return loadLocal(k)||[]; }
+function upsertList(k,rec){ const a=getList(k); const i=a.findIndex(x=>x.cid===rec.cid);
+  if(i>=0) a[i]={...a[i],...rec}; else a.unshift(rec); saveLocal(k,a); }
+// button-action registry: avoids fragile quoting of long URLs inside onclick attributes
+let _acts=[];
+function actBtn(label,cls,fn){ const i=_acts.push(fn)-1; return `<button class="btn ${cls} sm" onclick="runAct(${i})">${label}</button>`; }
+function runAct(i){ const f=_acts[i]; if(f) f(); }
 
 window.addEventListener('hashchange',boot);
 boot();
