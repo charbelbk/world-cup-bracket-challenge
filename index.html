@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>World Cup Bracket Challenge</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#ffffff; --line:#e4e6eb; --line2:#cdd1d9;
+    --text:#1c1e21; --muted:#8a8f98; --accent:#111827;
+    --sel:#111827; --selbg:#111827; --selfg:#ffffff;
+    --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+    --card-w:158px; --card-h:60px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  a{color:inherit}
+  /* ---------- header ---------- */
+  header{padding:16px 20px 8px;text-align:center}
+  header h1{margin:0;font-size:20px;font-weight:800;letter-spacing:-.02em}
+  header .sub{color:var(--muted);font-size:13px;margin-top:3px}
+  .banner{margin:10px auto 0;max-width:680px;background:#fff7ed;border:1px solid #fed7aa;
+    color:#9a3412;padding:10px 14px;border-radius:12px;font-size:13.5px;line-height:1.45}
+  .progress{display:inline-flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--muted)}
+  .pbar{width:180px;height:7px;border-radius:99px;background:var(--line);overflow:hidden}
+  .pbar>i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
+  /* ---------- scoreboard ---------- */
+  #scoreboard{display:none;margin:12px auto 0;max-width:560px;background:var(--card);
+    border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px}
+  #scoreboard.on{display:block}
+  .sb-row{display:flex;align-items:stretch;justify-content:center;gap:10px}
+  .sb-player{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 8px;border-radius:12px}
+  .sb-player .nm{display:flex;align-items:center;gap:7px;font-weight:700;font-size:15px;max-width:100%}
+  .sb-player .dot{width:13px;height:13px;border-radius:50%;flex:none}
+  .sb-player .sc{font-size:30px;font-weight:800;line-height:1.05}
+  .sb-vs{display:flex;align-items:center;font-weight:800;color:var(--muted);font-size:14px;padding:0 4px}
+  .sb-meta{text-align:center;color:var(--muted);font-size:12px;margin-top:6px}
+  .sb-tools{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+  /* ---------- bracket ---------- */
+  .bracket-scroll{overflow-x:auto;overflow-y:hidden;padding:10px 16px 24px;-webkit-overflow-scrolling:touch}
+  .bracket-inner{position:relative;display:flex;align-items:stretch;gap:26px;min-height:760px;
+    width:max-content;margin:0 auto}
+  svg.connectors{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
+  .col{display:flex;flex-direction:column;justify-content:space-around;position:relative;z-index:1}
+  .col.center{justify-content:center;min-width:200px;align-items:center}
+  .col-head{position:absolute;top:-2px;left:0;right:0;text-align:center;font-size:10.5px;
+    font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  /* ---------- match card ---------- */
+  .match{width:var(--card-w);background:var(--card);border:1px solid var(--line);
+    border-radius:12px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .team{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;font-size:13.5px;
+    font-weight:600;border:none;background:none;width:100%;text-align:left;color:var(--text);
+    transition:background .12s}
+  .team+.team{border-top:1px solid var(--line)}
+  .team .flag{font-size:18px;line-height:1;width:22px;text-align:center;flex:none}
+  .team .code{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .team .mark{font-size:11px;color:var(--muted);flex:none}
+  .team:hover{background:#f5f6f8}
+  .team.sel{background:var(--selbg);color:var(--selfg)}
+  .team.sel .mark{color:rgba(255,255,255,.7)}
+  .team.dim{opacity:.4}
+  .team.tbd{cursor:default;color:var(--muted);font-weight:500}
+  .team.tbd:hover{background:none}
+  .team.win-color{color:#fff !important}
+  .match.locked .team{cursor:default}
+  .match.locked .team:hover{background:none}
+  .match.locked .team.sel:hover{background:var(--selbg)}
+  /* champion */
+  .champ{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:14px}
+  .champ .trophy{font-size:34px}
+  .champ .label{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+  .champ .who{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 14px;box-shadow:var(--shadow)}
+  .champ .who.empty{color:var(--muted);font-weight:600}
+  .final-tag{font-size:10px;font-weight:800;letter-spacing:.08em;background:#fde047;color:#713f12;
+    padding:3px 8px;border-radius:6px;margin-bottom:8px}
+  /* ---------- footer / buttons ---------- */
+  footer{position:sticky;bottom:0;background:linear-gradient(to top,var(--bg) 70%,transparent);
+    padding:14px 16px 20px;text-align:center}
+  .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:11px;
+    padding:11px 18px;font-size:14.5px;font-weight:700;cursor:pointer;transition:transform .08s,opacity .12s}
+  .btn:active{transform:scale(.97)}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:disabled{background:var(--line2);color:#fff;cursor:not-allowed}
+  .btn.wa{background:#25d366;color:#fff}
+  .btn.ghost{background:var(--card);border:1px solid var(--line);color:var(--text)}
+  .btn.sm{padding:8px 13px;font-size:13px;border-radius:9px}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
+  /* ---------- modal ---------- */
+  .overlay{position:fixed;inset:0;background:rgba(15,18,25,.5);display:none;align-items:center;
+    justify-content:center;padding:18px;z-index:50}
+  .overlay.on{display:flex}
+  .modal{background:var(--card);border-radius:18px;max-width:460px;width:100%;max-height:90vh;
+    overflow-y:auto;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .modal h2{margin:0 0 4px;font-size:18px}
+  .modal p.s{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.5}
+  .modal label{display:block;font-size:12px;font-weight:700;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px}
+  .modal input[type=text]{width:100%;padding:11px 13px;border:1px solid var(--line2);
+    border-radius:10px;font-size:15px;font-family:inherit}
+  .modal input[type=text]:focus{outline:none;border-color:var(--accent)}
+  .swatches{display:flex;gap:9px;flex-wrap:wrap}
+  .swatch{width:34px;height:34px;border-radius:50%;cursor:pointer;border:3px solid transparent;
+    transition:transform .1s}
+  .swatch.sel{border-color:var(--text);transform:scale(1.08)}
+  .invite-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+  .invite-row input{flex:1}
+  .inv-list{margin-top:14px;display:flex;flex-direction:column;gap:10px}
+  .inv-card{border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:#fafbfc}
+  .inv-card .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .inv-card .iname{font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px}
+  .inv-card .ilink{font-size:11px;color:var(--muted);word-break:break-all;margin:7px 0 9px;
+    background:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 8px}
+  .inv-card .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .badge-dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .modal .x{float:right;background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);
+    line-height:1;margin:-6px -6px 0 0}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:10px;font-size:11.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg-box{width:22px;height:13px;border-radius:4px;display:inline-block;border:1px solid var(--line2)}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;
+    padding:10px 16px;border-radius:10px;font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:99}
+  .toast.on{opacity:1}
+  @media (max-width:640px){
+    header h1{font-size:18px}
+    :root{--card-w:144px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏆 World Cup Bracket Challenge</h1>
+  <div class="sub" id="subtitle">Tap a team in each matchup to send it through — Round of 32 to the Final.</div>
+  <div class="banner" id="banner" style="display:none"></div>
+  <div class="progress" id="progressWrap">
+    <span id="progressTxt">0 / 31 picks</span>
+    <span class="pbar"><i id="pbar"></i></span>
+  </div>
+</header>
+
+<div id="scoreboard"></div>
+
+<div class="bracket-scroll" id="scroll">
+  <div class="bracket-inner" id="inner">
+    <svg class="connectors" id="connectors"></svg>
+  </div>
+</div>
+
+<footer id="footer"></footer>
+
+<!-- Challenge setup modal -->
+<div class="overlay" id="modal">
+  <div class="modal">
+    <button class="x" onclick="closeModal()">×</button>
+    <h2>Challenge your friends</h2>
+    <p class="s">Each person you add gets their <b>own unique link</b>. Send it over WhatsApp — they fill out their bracket (no account needed) and your duel goes live. Add as many people as you want; each is a separate 1-v-1 challenge.</p>
+
+    <label>Your name</label>
+    <input type="text" id="myName" placeholder="e.g. Charbel" maxlength="24">
+
+    <label>Your color</label>
+    <div class="swatches" id="mySwatches"></div>
+
+    <div id="hostWarn" style="display:none;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;
+      padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.5;margin:14px 0 0">
+      ⚠️ <b>This page isn't hosted online yet</b>, so the links below won't open for other people.
+      Put this <code>.html</code> file on a free host (e.g. drag it onto
+      <b>app.netlify.com/drop</b>), then open it from that <code>https://</code> address and the
+      links will work for everyone.
+    </div>
+
+    <label>Add people to challenge</label>
+    <div class="invite-row">
+      <input type="text" id="inviteName" placeholder="Friend's name" maxlength="24"
+        onkeydown="if(event.key==='Enter')addInvite()">
+      <button class="btn primary sm" onclick="addInvite()">Add</button>
+    </div>
+    <div class="inv-list" id="invList"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   TEAMS  (Round of 32 — confirmed matchups)
+   ============================================================ */
+const TEAMS = {
+  GER:{n:'Germany',f:'🇩🇪'},      PAR:{n:'Paraguay',f:'🇵🇾'},
+  FRA:{n:'France',f:'🇫🇷'},       SWE:{n:'Sweden',f:'🇸🇪'},
+  RSA:{n:'South Africa',f:'🇿🇦'}, CAN:{n:'Canada',f:'🇨🇦'},
+  NED:{n:'Netherlands',f:'🇳🇱'},  MAR:{n:'Morocco',f:'🇲🇦'},
+  POR:{n:'Portugal',f:'🇵🇹'},     CRO:{n:'Croatia',f:'🇭🇷'},
+  ESP:{n:'Spain',f:'🇪🇸'},        AUT:{n:'Austria',f:'🇦🇹'},
+  USA:{n:'United States',f:'🇺🇸'},BIH:{n:'Bosnia & Herz.',f:'🇧🇦'},
+  BEL:{n:'Belgium',f:'🇧🇪'},      SEN:{n:'Senegal',f:'🇸🇳'},
+  BRA:{n:'Brazil',f:'🇧🇷'},       JPN:{n:'Japan',f:'🇯🇵'},
+  CIV:{n:"Côte d'Ivoire",f:'🇨🇮'},NOR:{n:'Norway',f:'🇳🇴'},
+  MEX:{n:'Mexico',f:'🇲🇽'},       ECU:{n:'Ecuador',f:'🇪🇨'},
+  ENG:{n:'England',f:'🏴󠁧󠁢󠁥󠁮󠁧󠁿'},  COD:{n:'DR Congo',f:'🇨🇩'},
+  ARG:{n:'Argentina',f:'🇦🇷'},    CPV:{n:'Cape Verde',f:'🇨🇻'},
+  AUS:{n:'Australia',f:'🇦🇺'},    EGY:{n:'Egypt',f:'🇪🇬'},
+  SUI:{n:'Switzerland',f:'🇨🇭'},  ALG:{n:'Algeria',f:'🇩🇿'},
+  COL:{n:'Colombia',f:'🇨🇴'},     GHA:{n:'Ghana',f:'🇬🇭'},
+};
+const LEFT_R32 = [['GER','PAR'],['FRA','SWE'],['RSA','CAN'],['NED','MAR'],
+                  ['POR','CRO'],['ESP','AUT'],['USA','BIH'],['BEL','SEN']];
+const RIGHT_R32= [['BRA','JPN'],['CIV','NOR'],['MEX','ECU'],['ENG','COD'],
+                  ['ARG','CPV'],['AUS','EGY'],['SUI','ALG'],['COL','GHA']];
+
+const COLORS = [
+  {n:'Blue',v:'#2563eb'},{n:'Red',v:'#e11d48'},{n:'Green',v:'#16a34a'},
+  {n:'Purple',v:'#7c3aed'},{n:'Orange',v:'#ea580c'},{n:'Teal',v:'#0d9488'}
+];
+const ROUND_NAMES = ['Round of 32','Round of 16','Quarterfinal','Semifinal','Final'];
+
+/* ============================================================
+   BUILD BRACKET TREE
+   ============================================================ */
+const matches = {};      // id -> match
+const order   = [];      // deterministic id order (used for bit encoding)
+function add(m){ matches[m.id]=m; order.push(m.id); }
+['L','R'].forEach(side=>{
+  const r32 = side==='L'?LEFT_R32:RIGHT_R32;
+  r32.forEach((pair,i)=>add({id:side+'32_'+i,round:0,side,
+      a:{type:'team',code:pair[0]}, b:{type:'team',code:pair[1]}}));
+  for(let i=0;i<4;i++) add({id:side+'16_'+i,round:1,side,
+      a:{type:'match',id:side+'32_'+(i*2)}, b:{type:'match',id:side+'32_'+(i*2+1)}});
+  for(let i=0;i<2;i++) add({id:side+'8_'+i,round:2,side,
+      a:{type:'match',id:side+'16_'+(i*2)}, b:{type:'match',id:side+'16_'+(i*2+1)}});
+  add({id:side+'4_0',round:3,side,
+      a:{type:'match',id:side+'8_0'}, b:{type:'match',id:side+'8_1'}});
+});
+add({id:'F',round:4,side:'C',a:{type:'match',id:'L4_0'},b:{type:'match',id:'R4_0'}});
+const TOTAL = order.length; // 31
+
+function resolve(src,p){ return src.type==='team' ? src.code : (p[src.id]||null); }
+function competitors(id,p){ const m=matches[id]; return [resolve(m.a,p),resolve(m.b,p)]; }
+
+function normalize(p){
+  order.forEach(id=>{
+    const [a,b]=competitors(id,p);
+    if(p[id] && p[id]!==a && p[id]!==b) delete p[id];
+  });
+}
+function countPicks(p){ return order.filter(id=>p[id]).length; }
+function complete(p){ return countPicks(p)===TOTAL; }
+
+/* ---- encode/decode a COMPLETE bracket as a short string (31 bits) ---- */
+function encodeBits(p){
+  let bin='';
+  for(const id of order){ const [a]=competitors(id,p); bin += (p[id]===a?'0':'1'); }
+  return parseInt(bin,2).toString(36);
+}
+function decodeBits(str){
+  let bin = parseInt(str,36).toString(2).padStart(TOTAL,'0');
+  const p={};
+  order.forEach((id,i)=>{ const [a,b]=competitors(id,p); p[id]= bin[i]==='0'?a:b; });
+  return p;
+}
+/* ---- results = partial picks, encoded as 31 chars 0/1/2 ---- */
+function encodeResults(res){
+  let s='';
+  order.forEach(id=>{ const [a]=competitors(id,res); const v=res[id];
+    s += !v ? '0' : (v===a?'1':'2'); });
+  return s;
+}
+function decodeResults(str){
+  const res={}; if(!str) return res;
+  order.forEach((id,i)=>{ const c=str[i]; if(!c||c==='0')return;
+    const [a,b]=competitors(id,res); res[id]= c==='1'?a:b; });
+  return res;
+}
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let MODE = 'build';          // build | join | duel
+let picks = {};              // current editable bracket
+let me = { name:'', color:0 };
+let challenge = null;        // {cid,fromName,fromColor,fromBits,toName}
+let duel = null;             // {cid,a:{name,color,picks},b:{name,color,picks},results:{}}
+let duelView = 'results';    // results | a | b
+let resultsEdit = false;
+
+const $ = s=>document.querySelector(s);
+const inner = $('#inner'), connSvg = $('#connectors');
+
+/* ============================================================
+   ROUTING
+   ============================================================ */
+function parseHash(){
+  const h = location.hash.replace(/^#/,'');
+  return new URLSearchParams(h);
+}
+function baseURL(){ return location.origin + location.pathname; }
+// Links can only be shared with other people when the page is served from a real
+// http(s) address. Opened as a local file / data URL, origin is "null" or "file:".
+function isShareable(){
+  return location.protocol==='http:' || location.protocol==='https:';
+}
+
+function boot(){
+  const p = parseHash();
+  if(p.get('duel')){
+    loadDuelFromParams(p); MODE='duel';
+  } else if(p.get('challenge')){
+    challenge = {
+      cid: p.get('challenge'),
+      fromName: p.get('fn')||'A friend',
+      fromColor: parseInt(p.get('fc')||'0',10),
+      fromBits: p.get('fb')||'',
+      toName: p.get('tn')||''
+    };
+    MODE='join';
+    picks = {}; // invitee starts fresh
+    me.name = challenge.toName||'';
+    me.color = nextColor(challenge.fromColor);
+  } else {
+    MODE='build';
+    const saved = loadLocal('wc_mybracket');
+    if(saved){ picks=saved.picks||{}; me.name=saved.name||''; me.color=saved.color||0; }
+  }
+  normalize(picks);
+  render();
+}
+function nextColor(c){ return (c+1)%COLORS.length; }
+
+function loadDuelFromParams(p){
+  const cid = p.get('duel');
+  const a = { name:p.get('an')||'Player 1', color:parseInt(p.get('ac')||'0',10), picks:decodeBits(p.get('ab')||'0') };
+  const b = { name:p.get('bn')||'Player 2', color:parseInt(p.get('bc')||'1',10), picks:decodeBits(p.get('bb')||'0') };
+  // results: from URL OR from this device's localStorage (whichever is more filled)
+  let resStr = p.get('r')||'';
+  const local = loadLocal('wc_duelres_'+cid);
+  const decided = s => (s||'').split('').filter(c=>c&&c!=='0').length;
+  if(local && decided(local) > decided(resStr)) resStr = local;
+  const results = decodeResults(resStr);
+  duel = { cid, a, b, results };
+  saveLocal('wc_duel_'+cid, {cid,an:a.name,ac:a.color,ab:p.get('ab'),bn:b.name,bc:b.color,bb:p.get('bb')});
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function render(){
+  // clear columns (keep svg)
+  [...inner.querySelectorAll('.col')].forEach(c=>c.remove());
+
+  const displayPicks = currentDisplayPicks();
+  const selectable = (MODE==='build'||MODE==='join') ;
+
+  // LEFT side rounds 0..3
+  for(let r=0;r<=3;r++) inner.insertBefore(buildColumn('L',r,displayPicks,selectable), null);
+  // CENTER
+  inner.appendChild(buildCenter(displayPicks));
+  // RIGHT side rounds 3..0
+  for(let r=3;r>=0;r--) inner.appendChild(buildColumn('R',r,displayPicks,selectable));
+
+  updateHeader();
+  updateScoreboard();
+  updateFooter();
+  requestAnimationFrame(drawConnectors);
+}
+
+function currentDisplayPicks(){
+  if(MODE==='duel'){
+    if(duelView==='a') return duel.a.picks;
+    if(duelView==='b') return duel.b.picks;
+    return duel.results;        // results view
+  }
+  return picks;
+}
+
+function buildColumn(side,round,dp,selectable){
+  const col=document.createElement('div');
+  col.className='col';
+  const head=document.createElement('div');
+  head.className='col-head'; head.textContent=ROUND_NAMES[round];
+  col.appendChild(head);
+  matchesOf(side,round).forEach(m=> col.appendChild(buildMatch(m,dp,selectable)));
+  return col;
+}
+function matchesOf(side,round){ return order.map(id=>matches[id]).filter(m=>m.side===side&&m.round===round); }
+
+function buildMatch(m,dp,selectable){
+  const [a,b]=competitors(m.id,dp);
+  const el=document.createElement('div');
+  el.className='match'; el.dataset.match=m.id;
+  if(!selectable) el.classList.add('locked');
+  el.appendChild(teamRow(m,a,dp,selectable));
+  el.appendChild(teamRow(m,b,dp,selectable));
+  return el;
+}
+
+function teamRow(m,code,dp,selectable){
+  const btn=document.createElement('button');
+  btn.className='team';
+  if(!code){ btn.classList.add('tbd'); btn.innerHTML='<span class="flag">·</span><span class="code">TBD</span>'; return btn; }
+  const t=TEAMS[code];
+  btn.dataset.team=code; btn.dataset.match=m.id;
+  btn.title=t.n;
+  const selected = dp[m.id]===code;
+  const other    = dp[m.id] && dp[m.id]!==code;
+  if(selected) btn.classList.add('sel');
+  if(other)    btn.classList.add('dim');
+
+  let mark='';
+  // ----- duel result coloring -----
+  if(MODE==='duel' && duelView==='results'){
+    const winner = duel.results[m.id];
+    if(winner===code){
+      const aOK = duel.a.picks[m.id]===winner;
+      const bOK = duel.b.picks[m.id]===winner;
+      const cA=COLORS[duel.a.color].v, cB=COLORS[duel.b.color].v;
+      btn.classList.remove('sel');
+      if(aOK&&bOK){ btn.classList.add('win-color'); btn.style.background=`linear-gradient(90deg,${cA} 50%,${cB} 50%)`; }
+      else if(aOK){ btn.classList.add('win-color'); btn.style.background=cA; }
+      else if(bOK){ btn.classList.add('win-color'); btn.style.background=cB; }
+      else { btn.classList.add('sel'); } // nobody right -> normal highlight
+    }
+  }
+  // ----- player view: tint their pick in their color -----
+  if(MODE==='duel' && (duelView==='a'||duelView==='b') && selected){
+    const c = duelView==='a'?COLORS[duel.a.color].v:COLORS[duel.b.color].v;
+    btn.style.background=c; btn.classList.add('win-color'); btn.classList.remove('sel');
+  }
+
+  btn.innerHTML=`<span class="flag">${t.f}</span><span class="code">${code}</span>`+
+                (mark?`<span class="mark">${mark}</span>`:'');
+  return btn;
+}
+
+function buildCenter(dp){
+  const col=document.createElement('div');
+  col.className='col center';
+  // FINAL match
+  const fm=matches['F'];
+  const tag=document.createElement('div'); tag.className='final-tag'; tag.textContent='FINAL';
+  col.appendChild(tag);
+  const selectable=(MODE==='build'||MODE==='join');
+  col.appendChild(buildMatch(fm,dp,selectable));
+  // champion
+  const champCode = dp['F'];
+  const ch=document.createElement('div'); ch.className='champ';
+  ch.innerHTML=`<div class="trophy">🏆</div><div class="label">Champion</div>`;
+  const who=document.createElement('div');
+  if(champCode){ who.className='who'; const t=TEAMS[champCode];
+    who.innerHTML=`<span style="font-size:20px">${t.f}</span> ${t.n}`; }
+  else { who.className='who empty'; who.textContent='?'; }
+  ch.appendChild(who);
+  col.appendChild(ch);
+  return col;
+}
+
+/* ============================================================
+   CONNECTOR LINES (svg elbows)
+   ============================================================ */
+function drawConnectors(){
+  const cr = inner.getBoundingClientRect();
+  connSvg.setAttribute('width', inner.scrollWidth);
+  connSvg.setAttribute('height', inner.scrollHeight);
+  connSvg.style.width=inner.scrollWidth+'px';
+  connSvg.style.height=inner.scrollHeight+'px';
+  let paths='';
+  const box=id=>{ const el=inner.querySelector(`.match[data-match="${id}"]`); if(!el)return null;
+    const r=el.getBoundingClientRect();
+    return {x:r.left-cr.left,y:r.top-cr.top,w:r.width,h:r.height}; };
+  order.map(id=>matches[id]).forEach(m=>{
+    ['a','b'].forEach(k=>{
+      const src=m[k]; if(src.type!=='match')return;
+      const c=box(src.id), pnt=box(m.id); if(!c||!pnt)return;
+      const cy=c.y+c.h/2, py=pnt.y+pnt.h/2;
+      let x1,x2;
+      if(c.x<pnt.x){ x1=c.x+c.w; x2=pnt.x; } else { x1=c.x; x2=pnt.x+pnt.w; }
+      const mid=(x1+x2)/2;
+      paths+=`<path d="M ${x1} ${cy} H ${mid} V ${py} H ${x2}" fill="none" stroke="var(--line2)" stroke-width="1.5"/>`;
+    });
+  });
+  connSvg.innerHTML=paths;
+}
+window.addEventListener('resize', ()=>requestAnimationFrame(drawConnectors));
+
+/* ============================================================
+   INTERACTION
+   ============================================================ */
+inner.addEventListener('click',e=>{
+  const btn=e.target.closest('.team[data-team]'); if(!btn)return;
+  const id=btn.dataset.match, code=btn.dataset.team;
+  if(MODE==='duel'){
+    if(resultsEdit){ setResult(id,code); }
+    return;
+  }
+  // build / join
+  picks[id]=code; normalize(picks); persistMine(); render();
+});
+
+function setResult(id,code){
+  // can only set a result if both competitors are decided
+  const [a,b]=competitors(id,duel.results);
+  if(code!==a && code!==b) return;
+  duel.results[id]=code; normalize(duel.results);
+  saveLocal('wc_duelres_'+duel.cid, encodeResults(duel.results));
+  render();
+}
+
+/* ============================================================
+   HEADER / SCOREBOARD / FOOTER
+   ============================================================ */
+function updateHeader(){
+  const banner=$('#banner'), sub=$('#subtitle'), pw=$('#progressWrap');
+  if(MODE==='build'){
+    sub.textContent='Tap a team in each matchup to send it through — Round of 32 to the Final.';
+    banner.style.display='none'; pw.style.display='inline-flex';
+    setProgress();
+  } else if(MODE==='join'){
+    sub.textContent='Fill out your bracket to accept the challenge.';
+    banner.style.display='block';
+    banner.innerHTML=`🥊 <b>${esc(challenge.fromName)}</b> challenged you to a bracket duel! `+
+      `Make your picks below, then tap <b>Accept Challenge</b>. No account needed.`;
+    pw.style.display='inline-flex'; setProgress();
+  } else { // duel
+    sub.textContent='Live duel — track results through the tournament.';
+    banner.style.display='none'; pw.style.display='none';
+  }
+}
+function setProgress(){
+  const n=countPicks(picks);
+  $('#progressTxt').textContent=`${n} / ${TOTAL} picks`;
+  $('#pbar').style.width=(n/TOTAL*100)+'%';
+}
+
+function updateScoreboard(){
+  const sb=$('#scoreboard');
+  if(MODE!=='duel'){ sb.classList.remove('on'); sb.innerHTML=''; return; }
+  sb.classList.add('on');
+  const decided=order.filter(id=>duel.results[id]).length;
+  const sa=score(duel.a.picks), sb2=score(duel.b.picks);
+  const cA=COLORS[duel.a.color].v, cB=COLORS[duel.b.color].v;
+  const lead = sa>sb2?'a':(sb2>sa?'b':'tie');
+  sb.innerHTML=`
+    <div class="sb-row">
+      <div class="sb-player" style="background:${lead==='a'?cA+'14':'transparent'}">
+        <div class="nm"><span class="dot" style="background:${cA}"></span>${esc(duel.a.name)}</div>
+        <div class="sc" style="color:${cA}">${sa}</div>
+      </div>
+      <div class="sb-vs">VS</div>
+      <div class="sb-player" style="background:${lead==='b'?cB+'14':'transparent'}">
+        <div class="nm"><span class="dot" style="background:${cB}"></span>${esc(duel.b.name)}</div>
+        <div class="sc" style="color:${cB}">${sb2}</div>
+      </div>
+    </div>
+    <div class="sb-meta">${decided} of ${TOTAL} matchups decided · 1 point per correct pick</div>
+    <div class="legend">
+      <span><i class="lg-box" style="background:${cA}"></i> ${esc(duel.a.name)} correct</span>
+      <span><i class="lg-box" style="background:${cB}"></i> ${esc(duel.b.name)} correct</span>
+      <span><i class="lg-box" style="background:linear-gradient(90deg,${cA} 50%,${cB} 50%)"></i> both</span>
+      <span><i class="lg-box" style="background:#111827"></i> neither</span>
+    </div>
+    <div class="sb-tools">
+      <button class="btn ghost sm" onclick="setView('results')">${duelView==='results'?'● ':''}Results</button>
+      <button class="btn ghost sm" onclick="setView('a')">${duelView==='a'?'● ':''}${esc(duel.a.name)}'s picks</button>
+      <button class="btn ghost sm" onclick="setView('b')">${duelView==='b'?'● ':''}${esc(duel.b.name)}'s picks</button>
+    </div>`;
+}
+function score(p){ return order.filter(id=>duel.results[id] && p[id]===duel.results[id]).length; }
+function setView(v){ duelView=v; resultsEdit=false; render(); }
+
+function updateFooter(){
+  const f=$('#footer');
+  if(MODE==='build'){
+    const done=complete(picks);
+    f.innerHTML=`
+      <button class="btn primary" id="challengeBtn" ${done?'':'disabled'} onclick="openSetup()">
+        ${done?'🥊 Save & Challenge a friend':'Finish your bracket to challenge'}</button>
+      <button class="btn ghost sm" onclick="resetBracket()" style="margin-left:8px">Reset</button>
+      <div class="hint">${done?'Your bracket is complete!':'Pick a winner in all '+TOTAL+' matchups.'}</div>`;
+  } else if(MODE==='join'){
+    const done=complete(picks);
+    f.innerHTML=`
+      <button class="btn primary" ${done?'':'disabled'} onclick="acceptChallenge()">
+        ${done?'✓ Accept Challenge':'Finish your bracket to accept'}</button>
+      <div class="hint">${done?'Locked in! Accept to start the duel vs '+esc(challenge.fromName)+'.':'Pick a winner in all '+TOTAL+' matchups.'}</div>`;
+  } else { // duel
+    f.innerHTML=`
+      <button class="btn ${resultsEdit?'primary':'ghost'}" onclick="toggleResultsEdit()">
+        ${resultsEdit?'✓ Done updating results':'⚙️ Update actual results'}</button>
+      <button class="btn wa" onclick="shareDuel()" style="margin-left:8px">Share duel link</button>
+      <div class="hint">${resultsEdit
+        ?'Tap the real winner of each completed matchup. Scores update live.'
+        :'Bookmark this page to track the duel all tournament long.'}</div>`;
+  }
+}
+function toggleResultsEdit(){ resultsEdit=!resultsEdit; if(resultsEdit) duelView='results'; render(); }
+
+/* ============================================================
+   BUILD-MODE ACTIONS
+   ============================================================ */
+function resetBracket(){
+  if(!confirm('Clear all your picks?'))return;
+  picks={}; persistMine(); render();
+}
+function persistMine(){ saveLocal('wc_mybracket',{picks,name:me.name,color:me.color}); }
+
+/* ============================================================
+   CHALLENGE SETUP MODAL
+   ============================================================ */
+let invites=[]; // {cid,name}
+function openSetup(){
+  $('#myName').value=me.name||'';
+  renderSwatches();
+  invites=[]; renderInvites();
+  $('#hostWarn').style.display = isShareable() ? 'none' : 'block';
+  $('#modal').classList.add('on');
+}
+function closeModal(){ $('#modal').classList.remove('on'); }
+function renderSwatches(){
+  const w=$('#mySwatches'); w.innerHTML='';
+  COLORS.forEach((c,i)=>{
+    const s=document.createElement('div');
+    s.className='swatch'+(i===me.color?' sel':'');
+    s.style.background=c.v; s.title=c.n;
+    s.onclick=()=>{ me.color=i; renderSwatches(); renderInvites(); persistMine(); };
+    w.appendChild(s);
+  });
+}
+function addInvite(){
+  const inp=$('#inviteName'); const name=inp.value.trim();
+  if(!name){ inp.focus(); return; }
+  me.name=$('#myName').value.trim()||me.name; persistMine();
+  const cid='c_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+  invites.push({cid,name}); inp.value=''; inp.focus(); renderInvites();
+}
+function challengeLink(inv){
+  const p=new URLSearchParams();
+  p.set('challenge',inv.cid);
+  p.set('fn', me.name||'A friend');
+  p.set('fc', me.color);
+  p.set('fb', encodeBits(picks));
+  p.set('tn', inv.name);
+  return baseURL()+'#'+p.toString();
+}
+function renderInvites(){
+  me.name=$('#myName').value.trim()||me.name;
+  const list=$('#invList'); list.innerHTML='';
+  if(!invites.length){ list.innerHTML='<div class="hint" style="text-align:left">No one added yet. Add a name above — you can add several.</div>'; return; }
+  invites.forEach(inv=>{
+    const link=challengeLink(inv);
+    const oppColor=COLORS[nextColor(me.color)].v;
+    const msg=`${me.name||'A friend'} challenged you to a World Cup bracket duel! 🏆⚽\nFill out your bracket here: ${link}`;
+    const wa=`https://wa.me/?text=${encodeURIComponent(msg)}`;
+    const row=document.createElement('div'); row.className='inv-card';
+    row.innerHTML=`
+      <div class="top">
+        <div class="iname"><span class="badge-dot" style="background:${oppColor}"></span>${esc(inv.name)}</div>
+        <div class="hint" style="margin:0">unique link</div>
+      </div>
+      <div class="ilink">${esc(link)}</div>
+      <div class="acts">
+        <a class="btn wa sm" href="${wa}" target="_blank" rel="noopener">Send on WhatsApp</a>
+        <button class="btn ghost sm" onclick="copyText(${JSON.stringify(link)})">Copy link</button>
+        <button class="btn ghost sm" onclick="shareNative(${JSON.stringify(msg)})">Share…</button>
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+/* ============================================================
+   JOIN -> create duel
+   ============================================================ */
+function acceptChallenge(){
+  const name = (prompt('Enter your name to lock in your bracket:', me.name||challenge.toName||'')||'').trim();
+  if(!name) return;
+  me.name=name;
+  const aColor=challenge.fromColor, bColor=nextColor(aColor);
+  const p=new URLSearchParams();
+  p.set('duel', challenge.cid);
+  p.set('an', challenge.fromName); p.set('ac', aColor); p.set('ab', challenge.fromBits);
+  p.set('bn', name);               p.set('bc', bColor); p.set('bb', encodeBits(picks));
+  const link=baseURL()+'#'+p.toString();
+  // switch into duel mode
+  location.hash=p.toString();
+  duel={ cid:challenge.cid,
+    a:{name:challenge.fromName,color:aColor,picks:decodeBits(challenge.fromBits)},
+    b:{name,color:bColor,picks:{...picks}},
+    results:{} };
+  MODE='duel'; duelView='results'; resultsEdit=false;
+  saveLocal('wc_duel_'+duel.cid,{cid:duel.cid,an:duel.a.name,ac:aColor,ab:challenge.fromBits,bn:name,bc:bColor,bb:encodeBits(picks)});
+  render();
+  // prompt to send back so challenger can watch too
+  setTimeout(()=>{
+    const msg=`I accepted your World Cup bracket challenge! Track our duel live here: ${link}`;
+    if(confirm(`You're in! 🥊\n\nSend this duel link back to ${challenge.fromName} so they can track it too?`)){
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`,'_blank');
+    }
+  },300);
+}
+
+/* ============================================================
+   DUEL share
+   ============================================================ */
+function shareDuel(){
+  const p=new URLSearchParams();
+  p.set('duel',duel.cid);
+  p.set('an',duel.a.name); p.set('ac',duel.a.color); p.set('ab',encodeBits(duel.a.picks));
+  p.set('bn',duel.b.name); p.set('bc',duel.b.color); p.set('bb',encodeBits(duel.b.picks));
+  const r=encodeResults(duel.results); if(r.replace(/0/g,'')) p.set('r',r);
+  const link=baseURL()+'#'+p.toString();
+  const msg=`World Cup bracket duel: ${duel.a.name} vs ${duel.b.name} — ${score(duel.a.picks)}–${score(duel.b.picks)}. Live results: ${link}`;
+  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`,'_blank');
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function esc(s){ return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function copyText(t){ navigator.clipboard?.writeText(t).then(()=>toast('Link copied!'),()=>toast('Copy failed')); }
+function shareNative(msg){
+  if(navigator.share){ navigator.share({text:msg}).catch(()=>{}); }
+  else { copyText(msg); }
+}
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),1800); }
+function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
+function loadLocal(k){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch(e){return null;} }
+
+window.addEventListener('hashchange',boot);
+boot();
+</script>
+</body>
+</html>
