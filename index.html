@@ -194,6 +194,18 @@
 
 <script>
 /* ============================================================
+   ☁️  CLOUD SYNC CONFIG  —  paste your Supabase values here
+   ------------------------------------------------------------
+   Leave both blank to run in local-only mode (links carry data,
+   no live cross-device sync). Fill both in to turn on live sync:
+   scores + results update automatically on every device, and
+   challenge links become short (just a challenge id).
+   ============================================================ */
+const SUPABASE_URL = 'https://llsiuezlodhlssvncfet.supabase.co';   // your Project URL
+const SUPABASE_KEY = 'sb_publishable_Py8dAHRxGdYqhBV8lJ1Ypg_NdRz4NNf';   // anon / publishable key (safe in browser)
+const CLOUD = !!(SUPABASE_URL && SUPABASE_KEY);
+
+/* ============================================================
    TEAMS  (Round of 32 — confirmed matchups)
    ============================================================ */
 const TEAMS = {
@@ -311,11 +323,14 @@ function isShareable(){
   return location.protocol==='http:' || location.protocol==='https:';
 }
 
-function boot(){
+async function boot(){
+  stopPoll();
   const p = parseHash();
-  if(p.get('duel')){
+  const cloudCid = p.get('c');
+  if(CLOUD && cloudCid){ await openCloud(cloudCid); return; }
+  if(p.get('duel')){                       // legacy local duel link
     loadDuelFromParams(p); MODE='duel';
-  } else if(p.get('challenge')){
+  } else if(p.get('challenge')){           // legacy local challenge link
     challenge = {
       cid: p.get('challenge'),
       fromName: p.get('fn')||'A friend',
@@ -336,6 +351,67 @@ function boot(){
   render();
 }
 function nextColor(c){ return (c+1)%COLORS.length; }
+
+/* ============================================================
+   ☁️ CLOUD (Supabase REST) — live cross-device sync
+   Table `duels`: cid text pk, a jsonb, b jsonb, results text, updated_at
+   ============================================================ */
+async function sb(path, opts={}){
+  const r = await fetch(SUPABASE_URL+'/rest/v1/'+path, {
+    ...opts,
+    headers:{ apikey:SUPABASE_KEY, Authorization:'Bearer '+SUPABASE_KEY,
+      'Content-Type':'application/json', ...(opts.headers||{}) }
+  });
+  if(!r.ok) throw new Error('Supabase '+r.status+': '+await r.text());
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+function cloudGet(cid){ return sb('duels?cid=eq.'+encodeURIComponent(cid)+'&select=*').then(a=>a&&a[0]||null); }
+function cloudCreate(row){ return sb('duels',{method:'POST',
+  headers:{Prefer:'resolution=merge-duplicates,return=representation'}, body:JSON.stringify(row)}); }
+function cloudPatch(cid, patch){ patch.updated_at=new Date().toISOString();
+  return sb('duels?cid=eq.'+encodeURIComponent(cid),{method:'PATCH',
+  headers:{Prefer:'return=representation'}, body:JSON.stringify(patch)}); }
+function cloudLink(cid){ return baseURL()+'#c='+cid; }
+function isMine(cid){ return getList('wc_challenges').some(c=>c.cid===cid); }
+function duelFromRow(row){
+  return { cid:row.cid,
+    a:{name:row.a.name, color:row.a.color, picks:decodeBits(row.a.bits)},
+    b:row.b?{name:row.b.name, color:row.b.color, picks:decodeBits(row.b.bits)}:null,
+    results:decodeResults(row.results||'') };
+}
+async function openCloud(cid){
+  let row;
+  try{ row = await cloudGet(cid); }
+  catch(e){ MODE='build'; render(); toast('Could not reach the server'); return; }
+  if(!row){ MODE='build'; render(); toast('Challenge not found'); return; }
+  if(!row.b && !isMine(cid)){
+    // a newcomer opening a challenge that nobody has accepted yet -> join flow
+    challenge = { cid, fromName:row.a.name, fromColor:row.a.color, fromBits:row.a.bits, toName:'' };
+    MODE='join'; picks={}; me.name=''; me.color=nextColor(row.a.color);
+    normalize(picks); render(); return;
+  }
+  duel = duelFromRow(row);
+  MODE='duel'; resultsEdit=false;
+  if(!duel.b) duelView='a'; else if(duelView==='b'&&!duel.b) duelView='results';
+  upsertList('wc_duels', {cid, an:row.a.name, bn:row.b?row.b.name:null, link:cloudLink(cid), ts:Date.now()});
+  render(); startPoll(cid);
+}
+let pollTimer=null;
+function startPoll(cid){
+  stopPoll();
+  pollTimer=setInterval(async()=>{
+    if(MODE!=='duel'){ stopPoll(); return; }
+    if(resultsEdit) return;                 // don't clobber while I'm editing
+    try{
+      const row=await cloudGet(cid); if(!row) return;
+      const same = (!!row.b)===(!!duel.b)
+        && (row.results||'')===encodeResults(duel.results)
+        && (!row.b || row.b.bits===encodeBits(duel.b.picks));
+      if(!same){ duel=duelFromRow(row); if(duelView==='b'&&!duel.b)duelView='results'; render(); }
+    }catch(e){}
+  }, 5000);
+}
+function stopPoll(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; }
 
 function loadDuelFromParams(p){
   const cid = p.get('duel');
@@ -378,6 +454,7 @@ function render(){
 
 function currentDisplayPicks(){
   if(MODE==='duel'){
+    if(!duel.b) return duel.a.picks;          // opponent hasn't joined yet
     if(duelView==='a') return duel.a.picks;
     if(duelView==='b') return duel.b.picks;
     return duel.results;        // results view
@@ -420,7 +497,7 @@ function teamRow(m,code,dp,selectable){
 
   let mark='';
   // ----- duel result coloring -----
-  if(MODE==='duel' && duelView==='results'){
+  if(MODE==='duel' && duelView==='results' && duel.b){
     const winner = duel.results[m.id];
     if(winner===code){
       const aOK = duel.a.picks[m.id]===winner;
@@ -434,7 +511,7 @@ function teamRow(m,code,dp,selectable){
     }
   }
   // ----- player view: tint their pick in their color -----
-  if(MODE==='duel' && (duelView==='a'||duelView==='b') && selected){
+  if(MODE==='duel' && (duelView==='a'||(duelView==='b'&&duel.b)) && selected){
     const c = duelView==='a'?COLORS[duel.a.color].v:COLORS[duel.b.color].v;
     btn.style.background=c; btn.classList.add('win-color'); btn.classList.remove('sel');
   }
@@ -513,7 +590,8 @@ function setResult(id,code){
   const [a,b]=competitors(id,duel.results);
   if(code!==a && code!==b) return;
   duel.results[id]=code; normalize(duel.results);
-  saveLocal('wc_duelres_'+duel.cid, encodeResults(duel.results));
+  if(CLOUD){ cloudPatch(duel.cid,{results:encodeResults(duel.results)}).catch(()=>toast('Sync failed — will retry')); }
+  else { saveLocal('wc_duelres_'+duel.cid, encodeResults(duel.results)); }
   render();
 }
 
@@ -547,6 +625,23 @@ function updateScoreboard(){
   const sb=$('#scoreboard');
   if(MODE!=='duel'){ sb.classList.remove('on'); sb.innerHTML=''; return; }
   sb.classList.add('on');
+  if(!duel.b){   // waiting for opponent to accept
+    const cA=COLORS[duel.a.color].v;
+    sb.innerHTML=`
+      <div class="sb-row">
+        <div class="sb-player">
+          <div class="nm"><span class="dot" style="background:${cA}"></span>${esc(duel.a.name)}</div>
+          <div class="sc" style="color:${cA}">—</div>
+        </div>
+        <div class="sb-vs">VS</div>
+        <div class="sb-player">
+          <div class="nm"><span class="dot" style="background:var(--line2)"></span>Waiting…</div>
+          <div class="sc" style="color:var(--muted)">—</div>
+        </div>
+      </div>
+      <div class="sb-meta">⏳ Waiting for your opponent to accept. ${CLOUD?'Their picks and the live score appear here automatically once they join.':'Send them the challenge link.'}</div>`;
+    return;
+  }
   const decided=order.filter(id=>duel.results[id]).length;
   const sa=score(duel.a.picks), sb2=score(duel.b.picks);
   const cA=COLORS[duel.a.color].v, cB=COLORS[duel.b.color].v;
@@ -597,15 +692,22 @@ function updateFooter(){
       <button class="btn primary" ${done?'':'disabled'} onclick="acceptChallenge()">
         ${done?'✓ Accept Challenge':'Finish your bracket to accept'}</button>
       <div class="hint">${done?'Locked in! Accept to start the duel vs '+esc(challenge.fromName)+'.':'Pick a winner in all '+TOTAL+' matchups.'}</div>`;
-  } else { // duel
+  } else if(!duel.b){ // duel, waiting for opponent
+    f.innerHTML=`
+      <button class="btn wa" onclick="shareDuel()">📲 Share challenge link</button>
+      ${mineBtn}
+      <div class="hint">${CLOUD
+        ?'This page updates by itself the moment your opponent joins — keep the link to come back anytime.'
+        :'Send them the challenge link to start the duel.'}</div>`;
+  } else { // live duel
     f.innerHTML=`
       <button class="btn ${resultsEdit?'primary':'ghost'}" onclick="toggleResultsEdit()">
         ${resultsEdit?'✓ Done updating results':'⚙️ Update actual results'}</button>
       <button class="btn wa" onclick="shareDuel()" style="margin-left:8px">Share duel link</button>
       ${mineBtn}
       <div class="hint">${resultsEdit
-        ?'Tap the real winner of each completed matchup. Scores update live.'
-        :'Bookmark this page to track the duel all tournament long.'}</div>`;
+        ?'Tap the real winner of each completed matchup. Scores sync to both players live.'
+        :(CLOUD?'Scores update live on both devices — open this link anytime.':'Bookmark this page to track the duel all tournament long.')}</div>`;
   }
 }
 function toggleResultsEdit(){ resultsEdit=!resultsEdit; if(resultsEdit) duelView='results'; render(); }
@@ -647,8 +749,14 @@ function addInvite(){
   me.name=$('#myName').value.trim()||me.name; persistMine();
   const cid='c_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
   invites.push({cid,name}); inp.value=''; inp.focus(); renderInvites();
+  // in cloud mode, create the shared duel row now (challenger = side a)
+  if(CLOUD){
+    cloudCreate({ cid, a:{name:me.name||'A friend', color:me.color, bits:encodeBits(picks)}, b:null, results:'' })
+      .catch(()=>toast('Could not reach the server — check your Supabase keys'));
+  }
 }
 function challengeLink(inv){
+  if(CLOUD) return cloudLink(inv.cid);   // short link; data lives in the cloud
   const p=new URLSearchParams();
   p.set('challenge',inv.cid);
   p.set('fn', me.name||'A friend');
@@ -687,7 +795,18 @@ function renderInvites(){
 /* ============================================================
    MY CHALLENGES & DUELS  (persistent tracker)
    ============================================================ */
-function openMine(){ renderMine(); $('#mineModal').classList.add('on'); }
+async function openMine(){
+  renderMine(); $('#mineModal').classList.add('on');
+  if(!CLOUD) return;
+  // refresh live status: any challenge whose opponent has joined becomes a duel
+  const cids=[...new Set(getList('wc_challenges').map(c=>c.cid))];
+  for(const cid of cids){
+    try{ const row=await cloudGet(cid);
+      if(row&&row.b) upsertList('wc_duels',{cid,an:row.a.name,bn:row.b.name,link:cloudLink(cid),ts:Date.now()});
+    }catch(e){}
+  }
+  if($('#mineModal').classList.contains('on')) renderMine();
+}
 function closeMine(){ $('#mineModal').classList.remove('on'); }
 function waLink(msg){ return `https://wa.me/?text=${encodeURIComponent(msg)}`; }
 function renderMine(){
@@ -732,11 +851,19 @@ function goLink(url){ if(url) location.href=url; }
 /* ============================================================
    JOIN -> create duel
    ============================================================ */
-function acceptChallenge(){
+async function acceptChallenge(){
   const name = (prompt('Enter your name to lock in your bracket:', me.name||challenge.toName||'')||'').trim();
   if(!name) return;
   me.name=name;
   const aColor=challenge.fromColor, bColor=nextColor(aColor);
+  if(CLOUD){
+    // write my bracket as side b; the duel then goes live on both devices
+    try{ await cloudPatch(challenge.cid, {b:{name, color:bColor, bits:encodeBits(picks)}}); }
+    catch(e){ alert("Couldn't reach the server — please check your connection and try again."); return; }
+    if(location.hash!=='#c='+challenge.cid) location.hash='c='+challenge.cid;
+    await openCloud(challenge.cid);     // load the now-complete duel (hash may be unchanged)
+    return;
+  }
   const p=new URLSearchParams();
   p.set('duel', challenge.cid);
   p.set('an', challenge.fromName); p.set('ac', aColor); p.set('ab', challenge.fromBits);
@@ -764,13 +891,21 @@ function acceptChallenge(){
    DUEL share
    ============================================================ */
 function shareDuel(){
-  const p=new URLSearchParams();
-  p.set('duel',duel.cid);
-  p.set('an',duel.a.name); p.set('ac',duel.a.color); p.set('ab',encodeBits(duel.a.picks));
-  p.set('bn',duel.b.name); p.set('bc',duel.b.color); p.set('bb',encodeBits(duel.b.picks));
-  const r=encodeResults(duel.results); if(r.replace(/0/g,'')) p.set('r',r);
-  const link=baseURL()+'#'+p.toString();
-  const msg=`World Cup bracket duel: ${duel.a.name} vs ${duel.b.name} — ${score(duel.a.picks)}–${score(duel.b.picks)}. Live results: ${link}`;
+  let link, msg;
+  if(CLOUD){
+    link=cloudLink(duel.cid);
+    msg = duel.b
+      ? `World Cup bracket duel: ${duel.a.name} vs ${duel.b.name} — live score ${score(duel.a.picks)}–${score(duel.b.picks)}: ${link}`
+      : `${duel.a.name} challenged you to a World Cup bracket duel! 🏆⚽ Fill out your bracket here: ${link}`;
+  } else {
+    const p=new URLSearchParams();
+    p.set('duel',duel.cid);
+    p.set('an',duel.a.name); p.set('ac',duel.a.color); p.set('ab',encodeBits(duel.a.picks));
+    p.set('bn',duel.b.name); p.set('bc',duel.b.color); p.set('bb',encodeBits(duel.b.picks));
+    const r=encodeResults(duel.results); if(r.replace(/0/g,'')) p.set('r',r);
+    link=baseURL()+'#'+p.toString();
+    msg=`World Cup bracket duel: ${duel.a.name} vs ${duel.b.name} — ${score(duel.a.picks)}–${score(duel.b.picks)}. Live results: ${link}`;
+  }
   window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`,'_blank');
 }
 
