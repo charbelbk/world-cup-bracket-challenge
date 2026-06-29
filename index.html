@@ -235,7 +235,7 @@ const COLORS = [
   {n:'Blue',v:'#2563eb'},{n:'Red',v:'#e11d48'},{n:'Green',v:'#16a34a'},
   {n:'Purple',v:'#7c3aed'},{n:'Orange',v:'#ea580c'},{n:'Teal',v:'#0d9488'}
 ];
-const ROUND_NAMES = ['Round of 32','Round of 16','Quarterfinal','Semifinal','Final'];
+const ROUND_NAMES = ['Round of 32','Round of 16','Quarterfinal','Semifinal','Final','3rd Place'];
 
 /* ============================================================
    BUILD BRACKET TREE
@@ -255,9 +255,16 @@ function add(m){ matches[m.id]=m; order.push(m.id); }
       a:{type:'match',id:side+'8_0'}, b:{type:'match',id:side+'8_1'}});
 });
 add({id:'F',round:4,side:'C',a:{type:'match',id:'L4_0'},b:{type:'match',id:'R4_0'}});
-const TOTAL = order.length; // 31
+// 3rd-place match: the two semifinal LOSERS
+add({id:'B3',round:5,side:'C',a:{type:'match',id:'L4_0',loser:true},b:{type:'match',id:'R4_0',loser:true}});
+const TOTAL = order.length; // 32 (incl. 3rd-place)
 
-function resolve(src,p){ return src.type==='team' ? src.code : (p[src.id]||null); }
+function resolve(src,p){
+  if(src.type==='team') return src.code;
+  const win = p[src.id]; if(!win) return null;
+  if(src.loser){ const m=matches[src.id]; const a=resolve(m.a,p), b=resolve(m.b,p); return win===a?b:(win===b?a:null); }
+  return win;
+}
 function competitors(id,p){ const m=matches[id]; return [resolve(m.a,p),resolve(m.b,p)]; }
 
 function normalize(p){
@@ -330,6 +337,7 @@ async function boot(){
   if(CLOUD && cloudCid){ await openCloud(cloudCid); return; }
   if(p.get('duel')){                       // legacy local duel link
     loadDuelFromParams(p); MODE='duel';
+    normalize(picks); await enterDuelLive(p.get('duel')); return;
   } else if(p.get('challenge')){           // legacy local challenge link
     challenge = {
       cid: p.get('challenge'),
@@ -394,22 +402,78 @@ async function openCloud(cid){
   MODE='duel'; resultsEdit=false;
   if(!duel.b) duelView='a'; else if(duelView==='b'&&!duel.b) duelView='results';
   upsertList('wc_duels', {cid, an:row.a.name, bn:row.b?row.b.name:null, link:cloudLink(cid), ts:Date.now()});
-  render(); startPoll(cid);
+  await enterDuelLive(cid);
+}
+/* ============================================================
+   🟢 LIVE RESULTS from ESPN (free, no key, CORS-open)
+   Real 2026 World Cup scores → official results for everyone,
+   fully automatic. Winner uses ESPN's `winner` flag (handles
+   extra time / penalty shootouts correctly).
+   ============================================================ */
+const ESPN_URL='https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260626-20260722';
+let espnPairs={};            // 'CODE|CODE' (sorted) -> winning team code, for FINISHED games
+let espnFetchedAt=0;
+// ESPN team -> our 3-letter code: abbreviations already match our codes; names are a fallback
+const ESPN_ALIAS={'IVORY COAST':'CIV',"COTE D'IVOIRE":'CIV','CONGO DR':'COD','DR CONGO':'COD',
+  'BOSNIA-HERZEGOVINA':'BIH','BOSNIA AND HERZEGOVINA':'BIH','UNITED STATES':'USA','CAPE VERDE':'CPV',
+  'SOUTH AFRICA':'RSA'};
+function espnCode(team){
+  if(!team) return null;
+  const ab=(team.abbreviation||'').toUpperCase();
+  if(TEAMS[ab]) return ab;
+  return ESPN_ALIAS[(team.displayName||'').toUpperCase()] || ESPN_ALIAS[(team.shortDisplayName||'').toUpperCase()] || null;
+}
+function pairKey(a,b){ return [a,b].sort().join('|'); }
+async function refreshESPN(){
+  try{
+    const r=await fetch(ESPN_URL,{cache:'no-store'}); if(!r.ok) return false;
+    const d=await r.json(); const pairs={};
+    (d.events||[]).forEach(e=>{
+      const comp=e.competitions&&e.competitions[0]; if(!comp)return;
+      const ty=e.status&&e.status.type; if(!ty||!ty.completed)return;     // only finished games
+      const cs=comp.competitors||[]; if(cs.length!==2)return;
+      const ca=espnCode(cs[0].team), cb=espnCode(cs[1].team); if(!ca||!cb)return;
+      const win = cs[0].winner?ca : (cs[1].winner?cb : null); if(!win) return;
+      pairs[pairKey(ca,cb)]=win;
+    });
+    espnPairs=pairs; espnFetchedAt=Date.now(); return true;
+  }catch(e){ return false; }
+}
+// turn finished-game winners into our results map; cascades through the bracket
+function computeOfficial(){
+  const res={};
+  order.forEach(id=>{ const [a,b]=competitors(id,res); if(!a||!b)return;
+    const w=espnPairs[pairKey(a,b)]; if(w===a||w===b) res[id]=w; });
+  return res;
 }
 let pollTimer=null;
-function startPoll(cid){
+async function enterDuelLive(cid){
+  await refreshESPN();
+  duel.results = computeOfficial();
+  render();
+  startLive(cid);
+}
+function startLive(cid){
   stopPoll();
-  pollTimer=setInterval(async()=>{
+  const tick=async()=>{
     if(MODE!=='duel'){ stopPoll(); return; }
-    if(resultsEdit) return;                 // don't clobber while I'm editing
-    try{
-      const row=await cloudGet(cid); if(!row) return;
-      const same = (!!row.b)===(!!duel.b)
-        && (row.results||'')===encodeResults(duel.results)
-        && (!row.b || row.b.bits===encodeBits(duel.b.picks));
-      if(!same){ duel=duelFromRow(row); if(duelView==='b'&&!duel.b)duelView='results'; render(); }
-    }catch(e){}
-  }, 5000);
+    let changed=false;
+    if(await refreshESPN()){
+      const res=computeOfficial();
+      if(encodeResults(res)!==encodeResults(duel.results)){ duel.results=res; changed=true; }
+    }
+    if(CLOUD && cid){                       // pick up opponent joining / their picks
+      try{ const row=await cloudGet(cid);
+        if(row){
+          const bChanged=(!!row.b)!==(!!duel.b) || (row.b&&duel.b&&row.b.bits!==encodeBits(duel.b.picks));
+          if(bChanged){ const keep=duel.results; duel=duelFromRow(row); duel.results=keep;
+            if(duelView==='b'&&!duel.b)duelView='results'; changed=true; }
+        }
+      }catch(e){}
+    }
+    if(changed) render();
+  };
+  pollTimer=setInterval(tick, 60000);       // refresh live every 60s
 }
 function stopPoll(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; }
 
@@ -540,6 +604,19 @@ function buildCenter(dp){
   else { who.className='who empty'; who.textContent='?'; }
   ch.appendChild(who);
   col.appendChild(ch);
+  // 3rd-place (bronze) match — the two semifinal losers
+  const btag=document.createElement('div'); btag.className='final-tag';
+  btag.style.background='#fed7aa'; btag.style.color='#9a3412'; btag.style.marginTop='18px';
+  btag.textContent='3RD PLACE';
+  col.appendChild(btag);
+  col.appendChild(buildMatch(matches['B3'],dp,selectable));
+  const bronzeCode = dp['B3'];
+  if(bronzeCode){
+    const bw=document.createElement('div'); bw.className='champ'; bw.style.marginTop='8px';
+    const t=TEAMS[bronzeCode];
+    bw.innerHTML=`<div class="who"><span style="font-size:18px">🥉</span> ${t.f} ${t.n}</div>`;
+    col.appendChild(bw);
+  }
   return col;
 }
 
@@ -557,6 +634,7 @@ function drawConnectors(){
     const r=el.getBoundingClientRect();
     return {x:r.left-cr.left,y:r.top-cr.top,w:r.width,h:r.height}; };
   order.map(id=>matches[id]).forEach(m=>{
+    if(m.id==='B3') return;            // bronze inputs are "losers" — skip its connectors
     ['a','b'].forEach(k=>{
       const src=m[k]; if(src.type!=='match')return;
       const c=box(src.id), pnt=box(m.id); if(!c||!pnt)return;
@@ -577,10 +655,7 @@ window.addEventListener('resize', ()=>requestAnimationFrame(drawConnectors));
 inner.addEventListener('click',e=>{
   const btn=e.target.closest('.team[data-team]'); if(!btn)return;
   const id=btn.dataset.match, code=btn.dataset.team;
-  if(MODE==='duel'){
-    if(resultsEdit){ setResult(id,code); }
-    return;
-  }
+  if(MODE==='duel'){ return; }              // results are automatic (live from ESPN)
   // build / join
   picks[id]=code; normalize(picks); persistMine(); render();
 });
@@ -658,7 +733,7 @@ function updateScoreboard(){
         <div class="sc" style="color:${cB}">${sb2}</div>
       </div>
     </div>
-    <div class="sb-meta">${decided} of ${TOTAL} matchups decided · 1 point per correct pick</div>
+    <div class="sb-meta">🟢 Live · ${decided} of ${TOTAL} matchups decided · 1 point per correct pick · auto-scored from real results</div>
     <div class="legend">
       <span><i class="lg-box" style="background:${cA}"></i> ${esc(duel.a.name)} correct</span>
       <span><i class="lg-box" style="background:${cB}"></i> ${esc(duel.b.name)} correct</span>
@@ -701,15 +776,13 @@ function updateFooter(){
         :'Send them the challenge link to start the duel.'}</div>`;
   } else { // live duel
     f.innerHTML=`
-      <button class="btn ${resultsEdit?'primary':'ghost'}" onclick="toggleResultsEdit()">
-        ${resultsEdit?'✓ Done updating results':'⚙️ Update actual results'}</button>
+      <button class="btn ghost" onclick="forceRefresh()">↻ Refresh scores</button>
       <button class="btn wa" onclick="shareDuel()" style="margin-left:8px">Share duel link</button>
       ${mineBtn}
-      <div class="hint">${resultsEdit
-        ?'Tap the real winner of each completed matchup. Scores sync to both players live.'
-        :(CLOUD?'Scores update live on both devices — open this link anytime.':'Bookmark this page to track the duel all tournament long.')}</div>`;
+      <div class="hint">🟢 Results update automatically from live World&nbsp;Cup scores — no need to enter anything. Open this link anytime.</div>`;
   }
 }
+async function forceRefresh(){ toast('Checking live scores…'); await refreshESPN(); duel.results=computeOfficial(); render(); }
 function toggleResultsEdit(){ resultsEdit=!resultsEdit; if(resultsEdit) duelView='results'; render(); }
 
 /* ============================================================
